@@ -94,9 +94,9 @@
             "failoverPriority": 0
         },
         "allLocations": "[concat(createArray(variables('primaryLocationObject')), parameters('secondaryLocations'))]",
-        "privateEndpointNameSql": "[concat(parameters('cosmosDbAccountName'), '-pe-sql')]",
-        "databaseOutputs": [],
-        "containerOutputs": []
+        "privateEndpointNameSql": "[concat(parameters('cosmosDbAccountName'), '-pe-sql')]"
+        // Removed unused "databaseOutputs": [],
+        // Removed unused "containerOutputs": []
     },
     "resources": [
         {
@@ -122,48 +122,48 @@
         {
             "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
             "apiVersion": "[variables('cosmosDbApiVersion')]",
-            "name": "[concat(parameters('cosmosDbAccountName'), '/', parameters('databases')[copyIndex()].name)]",
+            "name": "[concat(parameters('cosmosDbAccountName'), '/', parameters('databases')[copyIndex('dbCopyLoop')].name)]", // Updated copyIndex
             "dependsOn": [
                 "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))]"
             ],
             "copy": {
-                "name": "databaseCopy",
+                "name": "dbCopyLoop", // Renamed outer loop
                 "count": "[length(parameters('databases'))]"
             },
             "properties": {
                 "resource": {
-                    "id": "[parameters('databases')[copyIndex()].name]"
+                    "id": "[parameters('databases')[copyIndex('dbCopyLoop')].name]" // Updated copyIndex
                 },
-                "options": "[if(contains(parameters('databases')[copyIndex()], 'throughput'), createObject('throughput', parameters('databases')[copyIndex()].throughput), createObject())]"
+                "options": "[if(contains(parameters('databases')[copyIndex('dbCopyLoop')], 'throughput'), createObject('throughput', parameters('databases')[copyIndex('dbCopyLoop')].throughput), createObject())]" // Updated copyIndex
             }
         },
         {
             "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
             "apiVersion": "[variables('cosmosDbApiVersion')]",
-            "name": "[concat(parameters('cosmosDbAccountName'), '/', parameters('databases')[copyIndex('databaseCopy')].name, '/', parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].name)]",
+            "name": "[concat(parameters('cosmosDbAccountName'), '/', parameters('databases')[copyIndex('dbCopyLoop')].name, '/', parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')].name)]", // Updated copyIndex names
             "dependsOn": [
                 // Depend on the specific parent database instance from the outer loop
-                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('cosmosDbAccountName'), parameters('databases')[copyIndex('databaseCopy')].name)]"
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('cosmosDbAccountName'), parameters('databases')[copyIndex('dbCopyLoop')].name)]" // Updated copyIndex
             ],
             "copy": {
-                "name": "containerCopy",
-                "count": "[length(parameters('databases')[copyIndex('databaseCopy')].containers)]"
+                "name": "contCopyLoop", // Renamed inner loop
+                "count": "[length(parameters('databases')[copyIndex('dbCopyLoop')].containers)]" // Updated copyIndex
                 // Removed "input" field as it's not strictly necessary and direct copyIndex calls are used.
             },
             "properties": {
                 "resource": {
-                    "id": "[parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].name]",
+                    "id": "[parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')].name]", // Updated copyIndex names
                     "partitionKey": {
                         "paths": [
-                            "[parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].partitionKeyPath]"
+                            "[parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')].partitionKeyPath]" // Updated copyIndex names
                         ],
                         "kind": "Hash",
-                        "version": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'partitionKeyVersion'), parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].partitionKeyVersion, json('null'))]"
+                        "version": "[if(contains(parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')], 'partitionKeyVersion'), parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')].partitionKeyVersion, json('null'))]" // Updated copyIndex names
                     },
-                    "indexingPolicy": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'indexingPolicy'), parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].indexingPolicy, json('null'))]",
-                    "defaultTtl": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'defaultTtl'), parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].defaultTtl, json('null'))]"
+                    "indexingPolicy": "[if(contains(parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')], 'indexingPolicy'), parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')].indexingPolicy, json('null'))]", // Updated copyIndex names
+                    "defaultTtl": "[if(contains(parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')], 'defaultTtl'), parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')].defaultTtl, json('null'))]" // Updated copyIndex names
                 },
-                "options": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'throughput'), createObject('throughput', parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].throughput), createObject())]"
+                "options": "[if(contains(parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')], 'throughput'), createObject('throughput', parameters('databases')[copyIndex('dbCopyLoop')].containers[copyIndex('contCopyLoop')].throughput), createObject())]" // Updated copyIndex names
             }
         },
         {
@@ -228,11 +228,32 @@
         },
         "databaseNames": {
             "type": "array",
-            "value": "[map(parameters('databases'), db => db.name)]"
+            "copy": {
+                "name": "dbNamesOutputLoop",
+                "count": "[length(parameters('databases'))]",
+                "input": "[parameters('databases')[copyIndex('dbNamesOutputLoop')].name]"
+            }
         },
         "containerDetails": {
-            "type": "array",
-            "value": "[flatten(map(parameters('databases'), db => map(db.containers, container => createObject('databaseName', db.name, 'containerName', container.name, 'containerId', resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('cosmosDbAccountName'), db.name, container.name)))))]"
+            "type": "array", // This will be an array of database objects
+            "copy": {
+                "name": "dbInfoOutputLoop", // Outer loop for databases
+                "count": "[length(parameters('databases'))]",
+                "input": { // Object for each database
+                    "databaseName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].name]",
+                    "containers": { // This will be an array of container details for the current database
+                        "type": "array", // Explicitly declaring type for the inner structure (though not strictly an ARM output type)
+                        "copy": {
+                            "name": "containerInfoOutputLoop", // Inner loop for containers
+                            "count": "[length(parameters('databases')[copyIndex('dbInfoOutputLoop')].containers)]",
+                            "input": { // Object for each container
+                                "containerName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name]",
+                                "containerId": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('cosmosDbAccountName'), parameters('databases')[copyIndex('dbInfoOutputLoop')].name, parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name)]"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

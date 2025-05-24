@@ -1,0 +1,304 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "sqlServerName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure SQL Logical Server (globally unique)."
+            }
+        },
+        "location": {
+            "type": "string",
+            "metadata": {
+                "description": "Primary Azure region for the SQL Server."
+            }
+        },
+        "sqlAdminLogin": {
+            "type": "string",
+            "metadata": {
+                "description": "Admin username for the SQL Server."
+            }
+        },
+        "sqlAdminPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Admin password for the SQL Server."
+            }
+        },
+        "databases": {
+            "type": "array",
+            "metadata": {
+                "description": "Array of database objects."
+            }
+        },
+        "enableAuditing": {
+            "type": "bool",
+            "defaultValue": true,
+            "metadata": {
+                "description": "Boolean, whether to enable server-level auditing."
+            }
+        },
+        "auditStorageAccountResourceId": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Conditional, if enableAuditing is true) Resource ID of the storage account for audit logs."
+            }
+        },
+        "retentionDays": {
+            "type": "int",
+            "defaultValue": 90,
+            "metadata": {
+                "description": "(Conditional, if enableAuditing is true) Retention days for audit logs."
+            }
+        },
+        "enableFailoverGroup": {
+            "type": "bool",
+            "defaultValue": false,
+            "metadata": {
+                "description": "Boolean, whether to create a failover group for DR."
+            }
+        },
+        "failoverPartnerServerLocation": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Conditional, if enableFailoverGroup is true) Location of the secondary SQL server for the failover group."
+            }
+        },
+        "failoverGroupName": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Conditional, if enableFailoverGroup is true) Name of the failover group."
+            }
+        },
+        "readWriteEndpointFailoverPolicy": {
+            "type": "string",
+            "defaultValue": "Automatic",
+            "allowedValues": [
+                "Automatic",
+                "Manual"
+            ],
+            "metadata": {
+                "description": "(Conditional, if enableFailoverGroup is true) 'Automatic' or 'Manual'."
+            }
+        },
+        "readWriteEndpointFailoverGracePeriodMinutes": {
+            "type": "int",
+            "defaultValue": 60,
+            "metadata": {
+                "description": "(Conditional, if enableFailoverGroup is true) Grace period in minutes."
+            }
+        },
+        "privateEndpointSubnetResourceId": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the subnet to deploy the private endpoint into."
+            }
+        },
+        "privateDnsZoneIdSql": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the Private DNS Zone for privatelink.database.windows.net."
+            }
+        }
+    },
+    "variables": {
+        "sqlServerApiVersion": "2021-11-01",
+        "sqlDatabaseApiVersion": "2021-11-01",
+        "sqlAuditingSettingsApiVersion": "2021-11-01",
+        "sqlSecurityAlertPoliciesApiVersion": "2020-11-01-preview",
+        "sqlFailoverGroupApiVersion": "2021-11-01",
+        "privateEndpointApiVersion": "2021-05-01",
+        "privateDnsZoneGroupApiVersion": "2021-05-01",
+        "deployPrivateEndpoint": "[not(empty(parameters('privateEndpointSubnetResourceId')))]",
+        "linkPrivateDnsZoneSql": "[and(variables('deployPrivateEndpoint'), not(empty(parameters('privateDnsZoneIdSql'))))]",
+        "privateEndpointNameSql": "[concat(parameters('sqlServerName'), '-pe-sql')]",
+        "partnerServerResourceId": "[if(parameters('enableFailoverGroup'), resourceId(concat('Microsoft.Sql/servers/', parameters('sqlServerName'), '-secondary')), json('null'))]",
+        "failoverGroupDatabaseIds": "[map(parameters('databases'), db => resourceId('Microsoft.Sql/servers/databases', parameters('sqlServerName'), db.name))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Sql/servers",
+            "apiVersion": "[variables('sqlServerApiVersion')]",
+            "name": "[parameters('sqlServerName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "administratorLogin": "[parameters('sqlAdminLogin')]",
+                "administratorLoginPassword": "[parameters('sqlAdminPassword')]",
+                "version": "12.0",
+                "publicNetworkAccess": "[if(variables('deployPrivateEndpoint'), 'Disabled', 'Enabled')]"
+            }
+        },
+        {
+            "type": "Microsoft.Sql/servers/databases",
+            "apiVersion": "[variables('sqlDatabaseApiVersion')]",
+            "name": "[concat(parameters('sqlServerName'), '/', parameters('databases')[copyIndex()].name)]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+            ],
+            "sku": {
+                "name": "[parameters('databases')[copyIndex()].skuName]",
+                "tier": "[parameters('databases')[copyIndex()].skuTier]",
+                "family": "[if(contains(parameters('databases')[copyIndex()], 'skuFamily'), parameters('databases')[copyIndex()].skuFamily, json('null'))]",
+                "capacity": "[if(contains(parameters('databases')[copyIndex()], 'skuCapacity'), parameters('databases')[copyIndex()].skuCapacity, json('null'))]"
+            },
+            "properties": {
+                "collation": "[if(contains(parameters('databases')[copyIndex()], 'collation'), parameters('databases')[copyIndex()].collation, 'SQL_Latin1_General_CP1_CI_AS')]",
+                "maxSizeBytes": "[if(contains(parameters('databases')[copyIndex()], 'maxSizeBytes'), parameters('databases')[copyIndex()].maxSizeBytes, json('null'))]"
+            },
+            "copy": {
+                "name": "databaseCopy",
+                "count": "[length(parameters('databases'))]"
+            }
+        },
+        {
+            "condition": "[parameters('enableAuditing')]",
+            "type": "Microsoft.Sql/servers/auditingSettings",
+            "apiVersion": "[variables('sqlAuditingSettingsApiVersion')]",
+            "name": "[concat(parameters('sqlServerName'), '/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+            ],
+            "properties": {
+                "state": "Enabled",
+                "storageEndpoint": "[if(and(parameters('enableAuditing'), not(empty(parameters('auditStorageAccountResourceId')))), reference(parameters('auditStorageAccountResourceId'), '2021-09-01').primaryEndpoints.blob, json('null'))]",
+                "storageAccountAccessKey": "", // Key is not needed when using storageAccountSubscriptionId
+                "storageAccountSubscriptionId": "[if(and(parameters('enableAuditing'), not(empty(parameters('auditStorageAccountResourceId')))), split(parameters('auditStorageAccountResourceId'),'/')[2], json('null'))]",
+                "retentionDays": "[parameters('retentionDays')]",
+                "isAzureMonitorTargetEnabled": false // Can be set to true to send to Log Analytics/Event Hub
+            }
+        },
+        {
+            "type": "Microsoft.Sql/servers/securityAlertPolicies",
+            "apiVersion": "[variables('sqlSecurityAlertPoliciesApiVersion')]",
+            "name": "[concat(parameters('sqlServerName'), '/Default')]", // Note: API expects 'Default' not 'default'
+            "dependsOn": [
+                "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+            ],
+            "properties": {
+                "state": "Enabled",
+                "disabledAlerts": [],
+                "emailAddresses": [], // Add email addresses if needed
+                "emailAccountAdmins": false,
+                "storageEndpoint": "[if(and(parameters('enableAuditing'), not(empty(parameters('auditStorageAccountResourceId')))), reference(parameters('auditStorageAccountResourceId'), '2021-09-01').primaryEndpoints.blob, json('null'))]", // Required for alerts
+                "storageAccountAccessKey": "", // Not needed
+                "retentionDays": "[parameters('retentionDays')]"
+            }
+        },
+        {
+            "condition": "[parameters('enableFailoverGroup')]",
+            "type": "Microsoft.Sql/servers", // Secondary server for Failover Group
+            "apiVersion": "[variables('sqlServerApiVersion')]",
+            "name": "[concat(parameters('sqlServerName'), '-secondary')]",
+            "location": "[parameters('failoverPartnerServerLocation')]",
+            "dependsOn": [
+                 "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+            ],
+            "properties": {
+                "administratorLogin": "[parameters('sqlAdminLogin')]",
+                "administratorLoginPassword": "[parameters('sqlAdminPassword')]",
+                "version": "12.0"
+            }
+        },
+        {
+            "condition": "[parameters('enableFailoverGroup')]",
+            "type": "Microsoft.Sql/servers/failoverGroups",
+            "apiVersion": "[variables('sqlFailoverGroupApiVersion')]",
+            "name": "[concat(parameters('sqlServerName'), '/', parameters('failoverGroupName'))]",
+            "dependsOn": [
+                "databaseCopy", // Ensure databases are created before adding to FG
+                "[resourceId('Microsoft.Sql/servers', concat(parameters('sqlServerName'), '-secondary'))]"
+            ],
+            "properties": {
+                "readWriteEndpoint": {
+                    "failoverPolicy": "[parameters('readWriteEndpointFailoverPolicy')]",
+                    "failoverWithDataLossGracePeriodMinutes": "[parameters('readWriteEndpointFailoverGracePeriodMinutes')]"
+                },
+                "readOnlyEndpoint": {
+                    "failoverPolicy": "Disabled"
+                },
+                "partnerServers": [
+                    {
+                        "id": "[resourceId(subscription().subscriptionId, resourceGroup().name, 'Microsoft.Sql/servers', concat(parameters('sqlServerName'), '-secondary'))]"
+                    }
+                ],
+                "databases": "[variables('failoverGroupDatabaseIds')]"
+            }
+        },
+        {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "Microsoft.Network/privateEndpoints",
+            "apiVersion": "[variables('privateEndpointApiVersion')]",
+            "name": "[variables('privateEndpointNameSql')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+            ],
+            "properties": {
+                "subnet": {
+                    "id": "[parameters('privateEndpointSubnetResourceId')]"
+                },
+                "privateLinkServiceConnections": [
+                    {
+                        "name": "[variables('privateEndpointNameSql')]",
+                        "properties": {
+                            "privateLinkServiceId": "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]",
+                            "groupIds": [
+                                "sqlServer"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[variables('linkPrivateDnsZoneSql')]",
+            "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            "apiVersion": "[variables('privateDnsZoneGroupApiVersion')]",
+            "name": "[concat(variables('privateEndpointNameSql'), '/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameSql'))]"
+            ],
+            "properties": {
+                "privateDnsZoneConfigs": [
+                    {
+                        "name": "privatelink-database-windows-net",
+                        "properties": {
+                            "privateDnsZoneId": "[parameters('privateDnsZoneIdSql')]"
+                        }
+                    }
+                ]
+            }
+        }
+    ],
+    "outputs": {
+        "sqlServerId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))]"
+        },
+        "sqlServerFqdn": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.Sql/servers', parameters('sqlServerName'))).fullyQualifiedDomainName]"
+        },
+        "databaseIds": {
+            "type": "array",
+            "value": "[map(parameters('databases'), db => resourceId('Microsoft.Sql/servers/databases', parameters('sqlServerName'), db.name))]"
+        },
+        "failoverGroupId": {
+            "condition": "[parameters('enableFailoverGroup')]",
+            "type": "string",
+            "value": "[if(parameters('enableFailoverGroup'), resourceId('Microsoft.Sql/servers/failoverGroups', parameters('sqlServerName'), parameters('failoverGroupName')), json('null'))]"
+        },
+        "privateEndpointIdSql": {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "string",
+            "value": "[if(variables('deployPrivateEndpoint'), resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameSql')), json('null'))]"
+        }
+    }
+}

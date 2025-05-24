@@ -1,0 +1,214 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "storageAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure Storage Account (must be globally unique)."
+            }
+        },
+        "location": {
+            "type": "string",
+            "metadata": {
+                "description": "Azure region for the storage account."
+            }
+        },
+        "accountType": {
+            "type": "string",
+            "defaultValue": "Standard_ZRS",
+            "allowedValues": [
+                "Standard_LRS",
+                "Standard_ZRS",
+                "Standard_GRS",
+                "Standard_RAGRS",
+                "Premium_LRS"
+            ],
+            "metadata": {
+                "description": "Storage account SKU."
+            }
+        },
+        "kind": {
+            "type": "string",
+            "defaultValue": "StorageV2",
+            "allowedValues": [
+                "StorageV2",
+                "Storage",
+                "BlobStorage"
+            ],
+            "metadata": {
+                "description": "Kind of storage account."
+            }
+        },
+        "accessTier": {
+            "type": "string",
+            "defaultValue": "Hot",
+            "allowedValues": [
+                "Hot",
+                "Cool"
+            ],
+            "metadata": {
+                "description": "Access tier for blobs."
+            }
+        },
+        "supportsHttpsTrafficOnly": {
+            "type": "bool",
+            "defaultValue": true,
+            "metadata": {
+                "description": "Enforce HTTPS."
+            }
+        },
+        "allowBlobPublicAccess": {
+            "type": "bool",
+            "defaultValue": false,
+            "metadata": {
+                "description": "Whether to allow public access to blobs at the account level."
+            }
+        },
+        "minTlsVersion": {
+            "type": "string",
+            "defaultValue": "TLS1_2",
+            "allowedValues": [
+                "TLS1_0",
+                "TLS1_1",
+                "TLS1_2"
+            ],
+            "metadata": {
+                "description": "Minimum TLS version."
+            }
+        },
+        "containerNames": {
+            "type": "array",
+            "defaultValue": [],
+            "metadata": {
+                "description": "Array of blob container names to create."
+            }
+        },
+        "privateEndpointSubnetResourceId": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the subnet to deploy the private endpoint into."
+            }
+        },
+        "privateDnsZoneIdBlob": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the Private DNS Zone for privatelink.blob.core.windows.net."
+            }
+        }
+    },
+    "variables": {
+        "deployPrivateEndpoint": "[not(empty(parameters('privateEndpointSubnetResourceId')))]",
+        "linkPrivateDnsZoneBlob": "[and(variables('deployPrivateEndpoint'), not(empty(parameters('privateDnsZoneIdBlob'))))]",
+        "storageAccountApiVersion": "2021-09-01",
+        "privateEndpointApiVersion": "2021-05-01",
+        "privateDnsZoneGroupApiVersion": "2021-05-01",
+        "blobServicesContainersApiVersion": "2021-09-01",
+        "privateEndpointNameBlob": "[concat(parameters('storageAccountName'), '-pe-blob')]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "[variables('storageAccountApiVersion')]",
+            "name": "[parameters('storageAccountName')]",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "[parameters('accountType')]"
+            },
+            "kind": "[parameters('kind')]",
+            "properties": {
+                "accessTier": "[parameters('accessTier')]",
+                "supportsHttpsTrafficOnly": "[parameters('supportsHttpsTrafficOnly')]",
+                "allowBlobPublicAccess": "[parameters('allowBlobPublicAccess')]",
+                "minimumTlsVersion": "[parameters('minTlsVersion')]",
+                "networkAcls": {
+                    "bypass": "AzureServices",
+                    "virtualNetworkRules": [],
+                    "ipRules": [],
+                    "defaultAction": "[if(variables('deployPrivateEndpoint'), 'Deny', 'Allow')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+            "apiVersion": "[variables('blobServicesContainersApiVersion')]",
+            "name": "[concat(parameters('storageAccountName'), '/default/', parameters('containerNames')[copyIndex()])]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+            ],
+            "copy": {
+                "name": "containerCopy",
+                "count": "[length(parameters('containerNames'))]"
+            },
+            "properties": {
+                "publicAccess": "None"
+            }
+        },
+        {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "Microsoft.Network/privateEndpoints",
+            "apiVersion": "[variables('privateEndpointApiVersion')]",
+            "name": "[variables('privateEndpointNameBlob')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+            ],
+            "properties": {
+                "subnet": {
+                    "id": "[parameters('privateEndpointSubnetResourceId')]"
+                },
+                "privateLinkServiceConnections": [
+                    {
+                        "name": "[variables('privateEndpointNameBlob')]",
+                        "properties": {
+                            "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+                            "groupIds": [
+                                "blob"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[variables('linkPrivateDnsZoneBlob')]",
+            "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            "apiVersion": "[variables('privateDnsZoneGroupApiVersion')]",
+            "name": "[concat(variables('privateEndpointNameBlob'), '/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameBlob'))]"
+            ],
+            "properties": {
+                "privateDnsZoneConfigs": [
+                    {
+                        "name": "privatelink-blob-core-windows-net",
+                        "properties": {
+                            "privateDnsZoneId": "[parameters('privateDnsZoneIdBlob')]"
+                        }
+                    }
+                ]
+            }
+        }
+    ],
+    "outputs": {
+        "storageAccountId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+        },
+        "primaryBlobServiceEndpoint": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))).primaryEndpoints.blob]"
+        },
+        "privateEndpointIdBlob": {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameBlob'))]"
+        },
+        "containerResourceIds": {
+            "type": "array",
+            "value": "[if(greater(length(parameters('containerNames')), 0), createArray(map(parameters('containerNames'), item => resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', item))), createArray())]"
+        }
+    }
+}

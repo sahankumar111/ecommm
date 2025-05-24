@@ -1,0 +1,401 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "environmentPrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Prefix for naming resources (e.g., 'dev', 'prod')."
+            }
+        },
+        "primaryLocation": {
+            "type": "string",
+            "metadata": {
+                "description": "Primary Azure region for deployment."
+            }
+        },
+        "secondaryLocation": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) Secondary Azure region for DR purposes."
+            }
+        },
+        "sqlAdminLogin": {
+            "type": "string",
+            "metadata": {
+                "description": "Admin username for Azure SQL."
+            }
+        },
+        "sqlAdminPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Admin password for Azure SQL."
+            }
+        },
+        "keyVaultAdminObjectId": {
+            "type": "string",
+            "metadata": {
+                "description": "Object ID of the user/group to grant initial full access to Key Vault."
+            }
+        },
+        "vnetAddressPrefix": {
+            "type": "string",
+            "defaultValue": "10.0.0.0/16",
+            "metadata": {
+                "description": "Address prefix for the VNet."
+            }
+        },
+        "subnets": {
+            "type": "array",
+            "defaultValue": [
+                {
+                    "name": "default",
+                    "addressPrefix": "10.0.0.0/24"
+                },
+                {
+                    "name": "data",
+                    "addressPrefix": "10.0.1.0/24",
+                    "privateEndpointNetworkPolicies": "Disabled"
+                }
+            ],
+            "metadata": {
+                "description": "Configuration for VNet subnets."
+            }
+        },
+        "nsgs": {
+            "type": "array",
+            "defaultValue": [],
+            "metadata": {
+                "description": "Network Security Group definitions."
+            }
+        },
+        "storageContainerNames": {
+            "type": "array",
+            "defaultValue": ["logs", "backups"],
+            "metadata": {
+                "description": "Names of containers to create in the blob storage account."
+            }
+        },
+        "cosmosDatabases": {
+            "type": "array",
+            "defaultValue": [
+                {
+                    "name": "appdb",
+                    "throughput": 400,
+                    "containers": [
+                        {
+                            "name": "items",
+                            "partitionKeyPath": "/id"
+                        },
+                        {
+                            "name": "users",
+                            "partitionKeyPath": "/userId"
+                        }
+                    ]
+                }
+            ],
+            "metadata": {
+                "description": "Cosmos DB database and container definitions."
+            }
+        },
+        "sqlDatabases": {
+            "type": "array",
+            "defaultValue": [
+                {
+                    "name": "appsqldb",
+                    "skuName": "S0",
+                    "skuTier": "Standard"
+                }
+            ],
+            "metadata": {
+                "description": "SQL database definitions."
+            }
+        },
+        "privateDnsZoneIdBlob": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": { "description": "Resource ID of the pre-existing Private DNS Zone for privatelink.blob.core.windows.net. Leave empty to skip DNS group linking."}
+        },
+        "privateDnsZoneIdRedis": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": { "description": "Resource ID of the pre-existing Private DNS Zone for privatelink.redis.cache.windows.net. Leave empty to skip DNS group linking."}
+        },
+        "privateDnsZoneIdCosmosSql": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": { "description": "Resource ID of the pre-existing Private DNS Zone for privatelink.<cosmosdbacc>.documents.azure.com. Leave empty to skip DNS group linking."}
+        },
+        "privateDnsZoneIdSql": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": { "description": "Resource ID of the pre-existing Private DNS Zone for privatelink.database.windows.net. Leave empty to skip DNS group linking."}
+        },
+        "commonTags": {
+            "type": "object",
+            "defaultValue": {
+                "environment": "[parameters('environmentPrefix')]"
+            },
+            "metadata": {
+                "description": "Common tags to apply to resources."
+            }
+        }
+    },
+    "variables": {
+        "keyVaultName": "[concat(parameters('environmentPrefix'), '-kv')]",
+        "vnetName": "[concat(parameters('environmentPrefix'), '-vnet')]",
+        "logAnalyticsWorkspaceName": "[concat(parameters('environmentPrefix'), '-log')]",
+        "appInsightsName": "[concat(parameters('environmentPrefix'), '-appins')]",
+        "storageAccountName": "[concat(parameters('environmentPrefix'), 'st', uniqueString(resourceGroup().id))]", // Ensure global uniqueness for storage
+        "redisCacheName": "[concat(parameters('environmentPrefix'), '-redis')]",
+        "cosmosDbAccountName": "[concat(parameters('environmentPrefix'), '-cosmos')]", // Needs to be globally unique
+        "sqlServerName": "[concat(parameters('environmentPrefix'), '-sql')]", // Needs to be globally unique
+        "auditStorageAccountName": "[concat(parameters('environmentPrefix'), 'staudit', uniqueString(resourceGroup().id, 'audit'))]",
+        "keyVaultTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/keyVault.json",
+        "networkingTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/networking.json",
+        "logAnalyticsTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/logAnalytics.json",
+        "applicationInsightsTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/applicationInsights.json",
+        "blobStorageTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/blobStorage.json",
+        "redisCacheTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/redisCache.json",
+        "cosmosDbTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/cosmosDB.json",
+        "sqlDatabaseTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/sqlDatabase.json",
+        "dataSubnetName": "data", // Assuming a subnet named 'data' for private endpoints
+        "enableSqlFailoverGroup": "[not(empty(parameters('secondaryLocation')))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "keyVaultDeployment",
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('keyVaultTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "keyVaultName": { "value": "[variables('keyVaultName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "tenantId": { "value": "[subscription().tenantId]" },
+                    "objectId": { "value": "[parameters('keyVaultAdminObjectId')]" }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "networkingDeployment",
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('networkingTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "vnetName": { "value": "[variables('vnetName')]" },
+                    "vnetAddressPrefix": { "value": "[parameters('vnetAddressPrefix')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "subnets": { "value": "[parameters('subnets')]" },
+                    "nsgs": { "value": "[parameters('nsgs')]" }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "logAnalyticsDeployment",
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('logAnalyticsTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "workspaceName": { "value": "[variables('logAnalyticsWorkspaceName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "applicationInsightsDeployment",
+            "dependsOn": [
+                "logAnalyticsDeployment"
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('applicationInsightsTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "applicationInsightsName": { "value": "[variables('appInsightsName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "workspaceResourceId": { "value": "[reference('logAnalyticsDeployment').outputs.workspaceId.value]" }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "auditStorageDeployment", // Dedicated storage for SQL auditing
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('blobStorageTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "storageAccountName": { "value": "[variables('auditStorageAccountName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "containerNames": { "value": ["sqlauditing"] }
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "blobStorageDeployment",
+            "dependsOn": [
+                "networkingDeployment"
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('blobStorageTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "storageAccountName": { "value": "[variables('storageAccountName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "containerNames": { "value": "[parameters('storageContainerNames')]" },
+                    "privateEndpointSubnetResourceId": { "value": "[if(empty(parameters('privateDnsZoneIdBlob')), '', reference('networkingDeployment').outputs.subnetIds.value[variables('dataSubnetName')].id)]" },
+                    "privateDnsZoneIdBlob": {"value": "[parameters('privateDnsZoneIdBlob')]"}
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "redisCacheDeployment",
+            "dependsOn": [
+                "networkingDeployment"
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('redisCacheTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "redisCacheName": { "value": "[variables('redisCacheName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "skuName": { "value": "Standard" }, // Example, can be parameterized
+                    "skuFamily": { "value": "C" },      // Example
+                    "skuCapacity": { "value": 1 },      // Example (C1 - 1GB)
+                    "privateEndpointSubnetResourceId": { "value": "[if(empty(parameters('privateDnsZoneIdRedis')), '', reference('networkingDeployment').outputs.subnetIds.value[variables('dataSubnetName')].id)]" },
+                    "privateDnsZoneIdRedis": {"value": "[parameters('privateDnsZoneIdRedis')]"}
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "cosmosDbDeployment",
+            "dependsOn": [
+                "networkingDeployment"
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('cosmosDbTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "cosmosDbAccountName": { "value": "[variables('cosmosDbAccountName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "secondaryLocations": { "value": "[if(empty(parameters('secondaryLocation')), createArray(), createArray(createObject('locationName', parameters('secondaryLocation'), 'failoverPriority', 1)))]" },
+                    "defaultConsistencyLevel": { "value": "Session" }, // Example
+                    "databases": { "value": "[parameters('cosmosDatabases')]" },
+                    "privateEndpointSubnetResourceId": { "value": "[if(empty(parameters('privateDnsZoneIdCosmosSql')), '', reference('networkingDeployment').outputs.subnetIds.value[variables('dataSubnetName')].id)]" },
+                    "privateDnsZoneIdCosmosSql": {"value": "[parameters('privateDnsZoneIdCosmosSql')]"}
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2020-10-01",
+            "name": "sqlDatabaseDeployment",
+            "dependsOn": [
+                "networkingDeployment",
+                "auditStorageDeployment", // Depends on audit storage
+                "keyVaultDeployment" // Implicit dependency if secrets were used, but here for ordering
+            ],
+            "properties": {
+                "mode": "Incremental",
+                "templateLink": {
+                    "uri": "[variables('sqlDatabaseTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
+                },
+                "parameters": {
+                    "sqlServerName": { "value": "[variables('sqlServerName')]" },
+                    "location": { "value": "[parameters('primaryLocation')]" },
+                    "sqlAdminLogin": { "value": "[parameters('sqlAdminLogin')]" },
+                    "sqlAdminPassword": { "value": "[parameters('sqlAdminPassword')]" },
+                    "databases": { "value": "[parameters('sqlDatabases')]" },
+                    "enableAuditing": { "value": true },
+                    "auditStorageAccountResourceId": { "value": "[reference('auditStorageDeployment').outputs.storageAccountId.value]" },
+                    "enableFailoverGroup": { "value": "[variables('enableSqlFailoverGroup')]" },
+                    "failoverPartnerServerLocation": { "value": "[parameters('secondaryLocation')]" },
+                    "failoverGroupName": { "value": "[concat(variables('sqlServerName'), '-fg')]" },
+                    "privateEndpointSubnetResourceId": { "value": "[if(empty(parameters('privateDnsZoneIdSql')), '', reference('networkingDeployment').outputs.subnetIds.value[variables('dataSubnetName')].id)]" },
+                    "privateDnsZoneIdSql": {"value": "[parameters('privateDnsZoneIdSql')]"}
+                }
+            }
+        }
+    ],
+    "outputs": {
+        "keyVaultUri": {
+            "type": "string",
+            "value": "[reference('keyVaultDeployment').outputs.keyVaultUri.value]"
+        },
+        "vnetId": {
+            "type": "string",
+            "value": "[reference('networkingDeployment').outputs.vnetId.value]"
+        },
+        "dataSubnetId": {
+            "type": "string",
+            "value": "[try(reference('networkingDeployment').outputs.subnetIds.value[variables('dataSubnetName')].id, '')]"
+        },
+        "appInsightsInstrumentationKey": {
+            "type": "string",
+            "value": "[reference('applicationInsightsDeployment').outputs.instrumentationKey.value]"
+        },
+        "appInsightsConnectionString": {
+            "type": "string",
+            "value": "[reference('applicationInsightsDeployment').outputs.connectionString.value]"
+        },
+        "storageAccountBlobEndpoint": {
+            "type": "string",
+            "value": "[reference('blobStorageDeployment').outputs.primaryBlobServiceEndpoint.value]"
+        },
+        "redisHostName": {
+            "type": "string",
+            "value": "[reference('redisCacheDeployment').outputs.redisHostName.value]"
+        },
+        "cosmosDbEndpoint": {
+            "type": "string",
+            "value": "[reference('cosmosDbDeployment').outputs.cosmosDbEndpoint.value]"
+        },
+        "sqlServerFqdn": {
+            "type": "string",
+            "value": "[reference('sqlDatabaseDeployment').outputs.sqlServerFqdn.value]"
+        },
+        "auditStorageAccountId": {
+            "type": "string",
+            "value": "[reference('auditStorageDeployment').outputs.storageAccountId.value]"
+        }
+    }
+}

@@ -112,13 +112,6 @@
                 "description": "SQL database definitions."
             }
         },
-        "nestedTemplatesBaseUri": {
-            "type": "string",
-            "defaultValue": "[deployment().properties.templateLink.uri]",
-            "metadata": {
-                "description": "Base URI for the nested templates. Assumes templates are in the same location or a 'nested' subfolder relative to this main template."
-            }
-        },
         "privateDnsZoneIdBlob": {
             "type": "string",
             "defaultValue": "",
@@ -159,15 +152,14 @@
         "cosmosDbAccountName": "[concat(parameters('environmentPrefix'), '-cosmos')]", // Needs to be globally unique
         "sqlServerName": "[concat(parameters('environmentPrefix'), '-sql')]", // Needs to be globally unique
         "auditStorageAccountName": "[concat(parameters('environmentPrefix'), 'staudit', uniqueString(resourceGroup().id, 'audit'))]",
-        "nestedTemplatesFolder": "nested/", // Assuming a subfolder named 'nested'
-        "keyVaultTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'keyVault.json')]",
-        "networkingTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'networking.json')]",
-        "logAnalyticsTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'logAnalytics.json')]",
-        "applicationInsightsTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'applicationInsights.json')]",
-        "blobStorageTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'blobStorage.json')]",
-        "redisCacheTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'redisCache.json')]",
-        "cosmosDbTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'cosmosDB.json')]",
-        "sqlDatabaseTemplateUri": "[uri(parameters('nestedTemplatesBaseUri'), 'sqlDatabase.json')]",
+        "keyVaultTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/keyVault.json",
+        "networkingTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/networking.json",
+        "logAnalyticsTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/logAnalytics.json",
+        "applicationInsightsTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/applicationInsights.json",
+        "blobStorageTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/blobStorage.json",
+        "redisCacheTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/redisCache.json",
+        "cosmosDbTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/cosmosDB.json",
+        "sqlDatabaseTemplateUri": "https://raw.githubusercontent.com/sahankumar111/2ecomm/main/sahan/sqlDatabase.json",
         "dataSubnetName": "data", // Assuming a subnet named 'data' for private endpoints
         "enableSqlFailoverGroup": "[not(empty(parameters('secondaryLocation')))]"
     },
@@ -179,7 +171,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('keyVaultTemplateUri')]"
+                    "uri": "[variables('keyVaultTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "keyVaultName": { "value": "[variables('keyVaultName')]" },
@@ -196,7 +189,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('networkingTemplateUri')]"
+                    "uri": "[variables('networkingTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "vnetName": { "value": "[variables('vnetName')]" },
@@ -214,7 +208,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('logAnalyticsTemplateUri')]"
+                    "uri": "[variables('logAnalyticsTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "workspaceName": { "value": "[variables('logAnalyticsWorkspaceName')]" },
@@ -232,7 +227,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('applicationInsightsTemplateUri')]"
+                    "uri": "[variables('applicationInsightsTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "applicationInsightsName": { "value": "[variables('appInsightsName')]" },
@@ -248,7 +244,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('blobStorageTemplateUri')]"
+                    "uri": "[variables('blobStorageTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "storageAccountName": { "value": "[variables('auditStorageAccountName')]" },
@@ -267,7 +264,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('blobStorageTemplateUri')]"
+                    "uri": "[variables('blobStorageTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "storageAccountName": { "value": "[variables('storageAccountName')]" },
@@ -288,7 +286,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('redisCacheTemplateUri')]"
+                    "uri": "[variables('redisCacheTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "redisCacheName": { "value": "[variables('redisCacheName')]" },
@@ -311,7 +310,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('cosmosDbTemplateUri')]"
+                    "uri": "[variables('cosmosDbTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "cosmosDbAccountName": { "value": "[variables('cosmosDbAccountName')]" },
@@ -336,7 +336,8 @@
             "properties": {
                 "mode": "Incremental",
                 "templateLink": {
-                    "uri": "[variables('sqlDatabaseTemplateUri')]"
+                    "uri": "[variables('sqlDatabaseTemplateUri')]",
+                    "contentVersion": "1.0.0.0"
                 },
                 "parameters": {
                     "sqlServerName": { "value": "[variables('sqlServerName')]" },

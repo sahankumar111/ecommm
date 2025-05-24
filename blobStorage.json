@@ -208,7 +208,10 @@
         },
         "containerResourceIds": {
             "type": "array",
-            "value": "[if(greater(length(parameters('containerNames')), 0), createArray(map(parameters('containerNames'), item => resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', item))), createArray())]"
+            "copy": {
+                "count": "[length(parameters('containerNames'))]",
+                "input": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', parameters('containerNames')[copyIndex()])]"
+            }
         }
     }
 }

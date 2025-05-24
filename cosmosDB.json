@@ -142,14 +142,13 @@
             "apiVersion": "[variables('cosmosDbApiVersion')]",
             "name": "[concat(parameters('cosmosDbAccountName'), '/', parameters('databases')[copyIndex('databaseCopy')].name, '/', parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].name)]",
             "dependsOn": [
-                "databaseCopy"
+                // Depend on the specific parent database instance from the outer loop
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', parameters('cosmosDbAccountName'), parameters('databases')[copyIndex('databaseCopy')].name)]"
             ],
             "copy": {
                 "name": "containerCopy",
-                "count": "[length(parameters('databases')[copyIndex('databaseCopy')].containers)]",
-                "input": {
-                    "databaseIndex": "[copyIndex('databaseCopy')]"
-                }
+                "count": "[length(parameters('databases')[copyIndex('databaseCopy')].containers)]"
+                // Removed "input" field as it's not strictly necessary and direct copyIndex calls are used.
             },
             "properties": {
                 "resource": {

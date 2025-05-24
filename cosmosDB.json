@@ -94,9 +94,9 @@
             "failoverPriority": 0
         },
         "allLocations": "[concat(createArray(variables('primaryLocationObject')), parameters('secondaryLocations'))]",
-        "privateEndpointNameSql": "[concat(parameters('cosmosDbAccountName'), '-pe-sql')]",
-        "databaseOutputs": [],
-        "containerOutputs": []
+        "privateEndpointNameSql": "[concat(parameters('cosmosDbAccountName'), '-pe-sql')]"
+        // Removed unused "databaseOutputs": [],
+        // Removed unused "containerOutputs": []
     },
     "resources": [
         {
@@ -228,11 +228,32 @@
         },
         "databaseNames": {
             "type": "array",
-            "value": "[map(parameters('databases'), db => db.name)]"
+            "copy": {
+                "name": "dbNamesOutputLoop",
+                "count": "[length(parameters('databases'))]",
+                "input": "[parameters('databases')[copyIndex('dbNamesOutputLoop')].name]"
+            }
         },
         "containerDetails": {
-            "type": "array",
-            "value": "[flatten(map(parameters('databases'), db => map(db.containers, container => createObject('databaseName', db.name, 'containerName', container.name, 'containerId', resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('cosmosDbAccountName'), db.name, container.name)))))]" // Note: This output does not use copyIndex for its iteration logic, it uses map. It should be fine.
+            "type": "array", // This will be an array of database objects
+            "copy": {
+                "name": "dbInfoOutputLoop", // Outer loop for databases
+                "count": "[length(parameters('databases'))]",
+                "input": { // Object for each database
+                    "databaseName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].name]",
+                    "containers": { // This will be an array of container details for the current database
+                        "type": "array", // Explicitly declaring type for the inner structure (though not strictly an ARM output type)
+                        "copy": {
+                            "name": "containerInfoOutputLoop", // Inner loop for containers
+                            "count": "[length(parameters('databases')[copyIndex('dbInfoOutputLoop')].containers)]",
+                            "input": { // Object for each container
+                                "containerName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name]",
+                                "containerId": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('cosmosDbAccountName'), parameters('databases')[copyIndex('dbInfoOutputLoop')].name, parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name)]"
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

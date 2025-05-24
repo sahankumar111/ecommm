@@ -1,0 +1,239 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "cosmosDbAccountName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure Cosmos DB account (globally unique)."
+            }
+        },
+        "location": {
+            "type": "string",
+            "metadata": {
+                "description": "Primary Azure region for the Cosmos DB account."
+            }
+        },
+        "secondaryLocations": {
+            "type": "array",
+            "defaultValue": [],
+            "metadata": {
+                "description": "(Optional) Array of secondary Azure regions for geo-replication. Example: [ { \"locationName\": \"West US\", \"failoverPriority\": 1 } ]"
+            }
+        },
+        "defaultConsistencyLevel": {
+            "type": "string",
+            "allowedValues": [
+                "Eventual",
+                "ConsistentPrefix",
+                "Session",
+                "BoundedStaleness",
+                "Strong"
+            ],
+            "metadata": {
+                "description": "Default consistency level."
+            }
+        },
+        "maxStalenessPrefix": {
+            "type": "int",
+            "defaultValue": 100000,
+            "metadata": {
+                "description": "(Conditional, if defaultConsistencyLevel is BoundedStaleness) Max staleness in terms of versions."
+            }
+        },
+        "maxIntervalInSeconds": {
+            "type": "int",
+            "defaultValue": 300,
+            "metadata": {
+                "description": "(Conditional, if defaultConsistencyLevel is BoundedStaleness) Max staleness in terms of time."
+            }
+        },
+        "enableMultipleWriteLocations": {
+            "type": "bool",
+            "defaultValue": false,
+            "metadata": {
+                "description": "Boolean, for multi-master setup."
+            }
+        },
+        "enableAutomaticFailover": {
+            "type": "bool",
+            "defaultValue": "[greater(length(parameters('secondaryLocations')), 0)]",
+            "metadata": {
+                "description": "Boolean, for automatic failover. Defaults to true if secondaryLocations are provided."
+            }
+        },
+        "databases": {
+            "type": "array",
+            "metadata": {
+                "description": "Array of database objects with container definitions."
+            }
+        },
+        "privateEndpointSubnetResourceId": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the subnet to deploy the private endpoint into."
+            }
+        },
+        "privateDnsZoneIdCosmosSql": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the Private DNS Zone for privatelink.<accountName>.documents.azure.com (SQL API)."
+            }
+        }
+    },
+    "variables": {
+        "deployPrivateEndpoint": "[not(empty(parameters('privateEndpointSubnetResourceId')))]",
+        "linkPrivateDnsZoneSql": "[and(variables('deployPrivateEndpoint'), not(empty(parameters('privateDnsZoneIdCosmosSql'))))]",
+        "cosmosDbApiVersion": "2021-10-15", // Check latest recommended
+        "privateEndpointApiVersion": "2021-05-01",
+        "privateDnsZoneGroupApiVersion": "2021-05-01",
+        "primaryLocationObject": {
+            "locationName": "[parameters('location')]",
+            "failoverPriority": 0
+        },
+        "allLocations": "[concat(createArray(variables('primaryLocationObject')), parameters('secondaryLocations'))]",
+        "privateEndpointNameSql": "[concat(parameters('cosmosDbAccountName'), '-pe-sql')]",
+        "databaseOutputs": [],
+        "containerOutputs": []
+    },
+    "resources": [
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts",
+            "apiVersion": "[variables('cosmosDbApiVersion')]",
+            "name": "[parameters('cosmosDbAccountName')]",
+            "location": "[parameters('location')]",
+            "kind": "GlobalDocumentDB", // For SQL API
+            "properties": {
+                "consistencyPolicy": {
+                    "defaultConsistencyLevel": "[parameters('defaultConsistencyLevel')]",
+                    "maxStalenessPrefix": "[if(equals(parameters('defaultConsistencyLevel'), 'BoundedStaleness'), parameters('maxStalenessPrefix'), json('null'))]",
+                    "maxIntervalInSeconds": "[if(equals(parameters('defaultConsistencyLevel'), 'BoundedStaleness'), parameters('maxIntervalInSeconds'), json('null'))]"
+                },
+                "locations": "[variables('allLocations')]",
+                "databaseAccountOfferType": "Standard",
+                "enableMultipleWriteLocations": "[parameters('enableMultipleWriteLocations')]",
+                "enableAutomaticFailover": "[parameters('enableAutomaticFailover')]",
+                "publicNetworkAccess": "[if(variables('deployPrivateEndpoint'), 'Disabled', 'Enabled')]",
+                "capabilities": [] // Add capabilities like "EnableServerless" if needed
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+            "apiVersion": "[variables('cosmosDbApiVersion')]",
+            "name": "[concat(parameters('cosmosDbAccountName'), '/', parameters('databases')[copyIndex()].name)]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))]"
+            ],
+            "copy": {
+                "name": "databaseCopy",
+                "count": "[length(parameters('databases'))]"
+            },
+            "properties": {
+                "resource": {
+                    "id": "[parameters('databases')[copyIndex()].name]"
+                },
+                "options": "[if(contains(parameters('databases')[copyIndex()], 'throughput'), createObject('throughput', parameters('databases')[copyIndex()].throughput), createObject())]"
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+            "apiVersion": "[variables('cosmosDbApiVersion')]",
+            "name": "[concat(parameters('cosmosDbAccountName'), '/', parameters('databases')[copyIndex('databaseCopy')].name, '/', parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].name)]",
+            "dependsOn": [
+                "databaseCopy"
+            ],
+            "copy": {
+                "name": "containerCopy",
+                "count": "[length(parameters('databases')[copyIndex('databaseCopy')].containers)]",
+                "input": {
+                    "databaseIndex": "[copyIndex('databaseCopy')]"
+                }
+            },
+            "properties": {
+                "resource": {
+                    "id": "[parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].name]",
+                    "partitionKey": {
+                        "paths": [
+                            "[parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].partitionKeyPath]"
+                        ],
+                        "kind": "Hash",
+                        "version": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'partitionKeyVersion'), parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].partitionKeyVersion, json('null'))]"
+                    },
+                    "indexingPolicy": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'indexingPolicy'), parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].indexingPolicy, json('null'))]",
+                    "defaultTtl": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'defaultTtl'), parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].defaultTtl, json('null'))]"
+                },
+                "options": "[if(contains(parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')], 'throughput'), createObject('throughput', parameters('databases')[copyIndex('databaseCopy')].containers[copyIndex('containerCopy')].throughput), createObject())]"
+            }
+        },
+        {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "Microsoft.Network/privateEndpoints",
+            "apiVersion": "[variables('privateEndpointApiVersion')]",
+            "name": "[variables('privateEndpointNameSql')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))]"
+            ],
+            "properties": {
+                "subnet": {
+                    "id": "[parameters('privateEndpointSubnetResourceId')]"
+                },
+                "privateLinkServiceConnections": [
+                    {
+                        "name": "[variables('privateEndpointNameSql')]",
+                        "properties": {
+                            "privateLinkServiceId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))]",
+                            "groupIds": [
+                                "Sql" // Use "Cassandra", "Gremlin", "MongoDB", "Table" for other APIs
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[variables('linkPrivateDnsZoneSql')]",
+            "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            "apiVersion": "[variables('privateDnsZoneGroupApiVersion')]",
+            "name": "[concat(variables('privateEndpointNameSql'), '/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameSql'))]"
+            ],
+            "properties": {
+                "privateDnsZoneConfigs": [
+                    {
+                        "name": "privatelink-documents-azure-com", // This name is fairly standard for SQL API
+                        "properties": {
+                            "privateDnsZoneId": "[parameters('privateDnsZoneIdCosmosSql')]"
+                        }
+                    }
+                ]
+            }
+        }
+    ],
+    "outputs": {
+        "cosmosDbAccountId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))]"
+        },
+        "cosmosDbEndpoint": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))).documentEndpoint]"
+        },
+        "privateEndpointIdCosmosSql": {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameSql'))]"
+        },
+        "databaseNames": {
+            "type": "array",
+            "value": "[map(parameters('databases'), db => db.name)]"
+        },
+        "containerDetails": {
+            "type": "array",
+            "value": "[flatten(map(parameters('databases'), db => map(db.containers, container => createObject('databaseName', db.name, 'containerName', container.name, 'containerId', resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('cosmosDbAccountName'), db.name, container.name)))))]"
+        }
+    }
+}

@@ -1,0 +1,85 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "applicationInsightsName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Application Insights component."
+            }
+        },
+        "location": {
+            "type": "string",
+            "metadata": {
+                "description": "Azure region for Application Insights. Usually the same as the application and Log Analytics."
+            }
+        },
+        "applicationType": {
+            "type": "string",
+            "defaultValue": "web",
+            "allowedValues": [
+                "web",
+                "other"
+            ],
+            "metadata": {
+                "description": "Type of application being monitored (e.g., 'web', 'other')."
+            }
+        },
+        "workspaceResourceId": {
+            "type": "string",
+            "metadata": {
+                "description": "The resource ID of the Log Analytics Workspace to link with this Application Insights component."
+            }
+        },
+        "samplingPercentage": {
+            "type": "double",
+            "defaultValue": null,
+            "minValue": 0,
+            "maxValue": 100,
+            "metadata": {
+                "description": "Ingestion sampling percentage (0-100). Null means no sampling override."
+            }
+        },
+        "retentionInDays": {
+            "type": "int",
+            "defaultValue": null,
+            "minValue": 30,
+            "maxValue": 730,
+            "metadata": {
+                "description": "Data retention in days (30-730). Null means workspace-based retention."
+            }
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Insights/components",
+            "apiVersion": "2020-02-02",
+            "name": "[parameters('applicationInsightsName')]",
+            "location": "[parameters('location')]",
+            "kind": "[parameters('applicationType')]",
+            "properties": {
+                "Application_Type": "[parameters('applicationType')]",
+                "WorkspaceResourceId": "[parameters('workspaceResourceId')]",
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled",
+                "IngestionMode": "LogAnalytics", // Ensures workspace-based mode
+                "SamplingPercentage": "[if(not(empty(parameters('samplingPercentage'))), parameters('samplingPercentage'), json('null'))]",
+                "RetentionInDays": "[if(not(empty(parameters('retentionInDays'))), parameters('retentionInDays'), json('null'))]"
+            }
+        }
+    ],
+    "outputs": {
+        "appInsightsId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]"
+        },
+        "instrumentationKey": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), '2020-02-02').InstrumentationKey]"
+        },
+        "connectionString": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), '2020-02-02').ConnectionString]"
+        }
+    }
+}

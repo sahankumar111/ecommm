@@ -1,0 +1,181 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "redisCacheName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure Cache for Redis instance."
+            }
+        },
+        "location": {
+            "type": "string",
+            "metadata": {
+                "description": "Azure region for the Redis cache."
+            }
+        },
+        "skuName": {
+            "type": "string",
+            "allowedValues": [
+                "Basic",
+                "Standard",
+                "Premium",
+                "Enterprise",
+                "EnterpriseFlash"
+            ],
+            "metadata": {
+                "description": "SKU for the Redis cache (e.g., 'Basic', 'Standard', 'Premium', 'Enterprise', 'EnterpriseFlash')."
+            }
+        },
+        "skuFamily": {
+            "type": "string",
+            "allowedValues": [
+                "C",
+                "P",
+                "E",
+                "F"
+            ],
+            "metadata": {
+                "description": "Family of the SKU (C for Basic/Standard, P for Premium, E for Enterprise, F for EnterpriseFlash)."
+            }
+        },
+        "skuCapacity": {
+            "type": "int",
+            "metadata": {
+                "description": "Capacity of the SKU (e.g., 0 for C0 Basic 250MB, 1 for P1 Premium 6GB)."
+            }
+        },
+        "enableNonSslPort": {
+            "type": "bool",
+            "defaultValue": false,
+            "metadata": {
+                "description": "Boolean, whether to enable the non-SSL port."
+            }
+        },
+        "minimumTlsVersion": {
+            "type": "string",
+            "defaultValue": "1.2",
+            "allowedValues": [
+                "1.0",
+                "1.1",
+                "1.2"
+            ],
+            "metadata": {
+                "description": "Minimum TLS version (e.g., '1.2')."
+            }
+        },
+        "redisConfiguration": {
+            "type": "object",
+            "defaultValue": {},
+            "metadata": {
+                "description": "(Optional) Object for Redis-specific configurations (e.g., maxmemory-policy, maxmemory-reserved)."
+            }
+        },
+        "privateEndpointSubnetResourceId": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the subnet to deploy the private endpoint into."
+            }
+        },
+        "privateDnsZoneIdRedis": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) The Resource ID of the Private DNS Zone for privatelink.redis.cache.windows.net if using private endpoints."
+            }
+        }
+    },
+    "variables": {
+        "deployPrivateEndpoint": "[not(empty(parameters('privateEndpointSubnetResourceId')))]",
+        "linkPrivateDnsZoneRedis": "[and(variables('deployPrivateEndpoint'), not(empty(parameters('privateDnsZoneIdRedis'))))]",
+        "redisApiVersion": "2022-06-01",
+        "privateEndpointApiVersion": "2021-05-01",
+        "privateDnsZoneGroupApiVersion": "2021-05-01",
+        "privateEndpointNameRedis": "[concat(parameters('redisCacheName'), '-pe-redis')]",
+        "redisConfigurationsObject": "[if(empty(parameters('redisConfiguration')), json('null'), parameters('redisConfiguration'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Cache/redis",
+            "apiVersion": "[variables('redisApiVersion')]",
+            "name": "[parameters('redisCacheName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "sku": {
+                    "name": "[parameters('skuName')]",
+                    "family": "[parameters('skuFamily')]",
+                    "capacity": "[parameters('skuCapacity')]"
+                },
+                "enableNonSslPort": "[parameters('enableNonSslPort')]",
+                "minimumTlsVersion": "[parameters('minimumTlsVersion')]",
+                "redisConfiguration": "[variables('redisConfigurationsObject')]",
+                "publicNetworkAccess": "[if(variables('deployPrivateEndpoint'), 'Disabled', 'Enabled')]"
+            }
+        },
+        {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "Microsoft.Network/privateEndpoints",
+            "apiVersion": "[variables('privateEndpointApiVersion')]",
+            "name": "[variables('privateEndpointNameRedis')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]"
+            ],
+            "properties": {
+                "subnet": {
+                    "id": "[parameters('privateEndpointSubnetResourceId')]"
+                },
+                "privateLinkServiceConnections": [
+                    {
+                        "name": "[variables('privateEndpointNameRedis')]",
+                        "properties": {
+                            "privateLinkServiceId": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]",
+                            "groupIds": [
+                                "redisCache"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[variables('linkPrivateDnsZoneRedis')]",
+            "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            "apiVersion": "[variables('privateDnsZoneGroupApiVersion')]",
+            "name": "[concat(variables('privateEndpointNameRedis'), '/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameRedis'))]"
+            ],
+            "properties": {
+                "privateDnsZoneConfigs": [
+                    {
+                        "name": "privatelink-redis-cache-windows-net",
+                        "properties": {
+                            "privateDnsZoneId": "[parameters('privateDnsZoneIdRedis')]"
+                        }
+                    }
+                ]
+            }
+        }
+    ],
+    "outputs": {
+        "redisCacheId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Cache/redis', parameters('redisCacheName'))]"
+        },
+        "redisHostName": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.Cache/redis', parameters('redisCacheName')), variables('redisApiVersion')).hostName]"
+        },
+        "redisPrimaryPortSsl": {
+            "type": "int",
+            "value": "[reference(resourceId('Microsoft.Cache/redis', parameters('redisCacheName')), variables('redisApiVersion')).sslPort]"
+        },
+        "privateEndpointIdRedis": {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameRedis'))]"
+        }
+    }
+}

@@ -1,0 +1,166 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "vnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Virtual Network."
+            }
+        },
+        "vnetAddressPrefix": {
+            "type": "string",
+            "defaultValue": "10.0.0.0/16",
+            "metadata": {
+                "description": "Address prefix for the VNet (e.g., \"10.0.0.0/16\")."
+            }
+        },
+        "location": {
+            "type": "string",
+            "metadata": {
+                "description": "Azure region for the networking resources."
+            }
+        },
+        "subnets": {
+            "type": "array",
+            "metadata": {
+                "description": "Array of subnet objects."
+            }
+        },
+        "nsgs": {
+            "type": "array",
+            "defaultValue": [],
+            "metadata": {
+                "description": "Array of Network Security Group objects."
+            }
+        }
+    },
+    "variables": {
+        "subnetOutputs": []
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2020-11-01",
+            "name": "[parameters('nsgs')[copyIndex()].name]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "securityRules": "[if(contains(parameters('nsgs')[copyIndex()], 'securityRules'), parameters('nsgs')[copyIndex()].securityRules, json('[]'))]"
+            },
+            "copy": {
+                "name": "nsgCopy",
+                "count": "[length(parameters('nsgs'))]"
+            }
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2020-11-01",
+            "name": "[parameters('vnetName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[parameters('vnetAddressPrefix')]"
+                    ]
+                },
+                "subnets": "[json(concat('[', string(variables('subnetOutputs')), ']'))]"
+            },
+            "dependsOn": [
+                "nsgCopy"
+            ]
+        }
+    ],
+    "outputs": {
+        "vnetId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
+        },
+        "subnetIds": {
+            "type": "object",
+            "value": "[createObject(variables('subnetOutputs').apply(item => item.name).apply(name => name), variables('subnetOutputs').apply(item => item.id))]"
+        }
+    },
+    "functions": [
+        {
+            "namespace": "contoso",
+            "members": {
+                "buildSubnetObject": {
+                    "parameters": [
+                        {
+                            "name": "subnetConfig",
+                            "type": "object"
+                        },
+                        {
+                            "name": "vnetName",
+                            "type": "string"
+                        },
+                        {
+                            "name": "location",
+                            "type": "string"
+                        },
+                        {
+                             "name": "allNsgs",
+                             "type": "array"
+                        }
+                    ],
+                    "output": {
+                        "type": "object"
+                    },
+                    "statements": [
+                        {
+                            "variable": "subnetObject",
+                            "value": {
+                                "name": "[subnetConfig.name]",
+                                "properties": {
+                                    "addressPrefix": "[subnetConfig.addressPrefix]"
+                                }
+                            }
+                        },
+                        {
+                            "if": "[contains(subnetConfig, 'nsgName')]",
+                            "then": [
+                                {
+                                    "variable": "nsgId",
+                                    "value": "[if(empty(parameters('nsgs')), json('null'), resourceId('Microsoft.Network/networkSecurityGroups', subnetConfig.nsgName))]"
+                                },
+                                {
+                                   "set": "subnetObject.properties.networkSecurityGroup",
+                                   "value": "[if(not(equals(variables('nsgId'), json('null'))), createObject('id', variables('nsgId')), json('null'))]"
+                                }
+                            ]
+                        },
+                        {
+                            "if": "[contains(subnetConfig, 'privateEndpointNetworkPolicies')]",
+                            "then": [
+                                {
+                                    "set": "subnetObject.properties.privateEndpointNetworkPolicies",
+                                    "value": "[subnetConfig.privateEndpointNetworkPolicies]"
+                                }
+                            ]
+                        },
+                        {
+                            "if": "[contains(subnetConfig, 'privateLinkServiceNetworkPolicies')]",
+                            "then": [
+                                {
+                                    "set": "subnetObject.properties.privateLinkServiceNetworkPolicies",
+                                    "value": "[subnetConfig.privateLinkServiceNetworkPolicies]"
+                                }
+                            ]
+                        },
+                        {
+                            "return": "[subnetObject]"
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "initialization": {
+        "variables": {
+            "subnetOutputs": {
+                "type": "array",
+                "value": "[parameters('subnets').map(subnet => contoso.buildSubnetObject(subnet, parameters('vnetName'), parameters('location'), parameters('nsgs')))]"
+            }
+        }
+    }
+}

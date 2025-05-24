@@ -76,8 +76,8 @@
             "value": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]"
         },
         "subnetIds": {
-            "type": "object",
-            "value": "[createObject(variables('subnetOutputs').apply(item => item.name).apply(name => name), variables('subnetOutputs').apply(item => item.id))]"
+            "type": "array",
+            "value": "[variables('subnetOutputs')]"
         }
     },
     "functions": [

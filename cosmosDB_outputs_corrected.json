@@ -1,0 +1,40 @@
+{
+    "outputs": {
+        "cosmosDbAccountId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))]"
+        },
+        "cosmosDbEndpoint": {
+            "type": "string",
+            "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosDbAccountName'))).documentEndpoint]"
+        },
+        "privateEndpointIdCosmosSql": {
+            "condition": "[variables('deployPrivateEndpoint')]",
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointNameSql'))]"
+        },
+        "databaseNames": {
+            "type": "array",
+            "copy": [
+                {
+                    "name": "databaseNamesOutputLoop",
+                    "count": "[length(parameters('databases'))]",
+                    "input": "[parameters('databases')[copyIndex('databaseNamesOutputLoop')].name]"
+                }
+            ]
+        },
+        "containerDetails": {
+            "type": "array",
+            "copy": [
+                {
+                    "name": "containerDetailsDbLoop",
+                    "count": "[length(parameters('databases'))]",
+                    "input": {
+                        "databaseName": "[parameters('databases')[copyIndex('containerDetailsDbLoop')].name]",
+                        "containers": "[parameters('databases')[copyIndex('containerDetailsDbLoop')].containers]"
+                    }
+                }
+            ]
+        }
+    }
+}

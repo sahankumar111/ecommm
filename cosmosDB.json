@@ -228,32 +228,38 @@
         },
         "databaseNames": {
             "type": "array",
-            "copy": {
-                "name": "dbNamesOutputLoop",
-                "count": "[length(parameters('databases'))]",
-                "input": "[parameters('databases')[copyIndex('dbNamesOutputLoop')].name]"
-            }
+            "copy": [ // 'copy' is now an array
+                {       // The loop definition is an object within this array
+                    "name": "dbNamesOutputLoop",
+                    "count": "[length(parameters('databases'))]",
+                    "input": "[parameters('databases')[copyIndex('dbNamesOutputLoop')].name]"
+                }
+            ]
         },
         "containerDetails": {
             "type": "array", // This will be an array of database objects
-            "copy": {
-                "name": "dbInfoOutputLoop", // Outer loop for databases
-                "count": "[length(parameters('databases'))]",
-                "input": { // Object for each database
-                    "databaseName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].name]",
-                    "containers": { // This will be an array of container details for the current database
-                        "type": "array", // Explicitly declaring type for the inner structure (though not strictly an ARM output type)
-                        "copy": {
-                            "name": "containerInfoOutputLoop", // Inner loop for containers
-                            "count": "[length(parameters('databases')[copyIndex('dbInfoOutputLoop')].containers)]",
-                            "input": { // Object for each container
-                                "containerName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name]",
-                                "containerId": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('cosmosDbAccountName'), parameters('databases')[copyIndex('dbInfoOutputLoop')].name, parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name)]"
-                            }
+            "copy": [ // 'copy' is now an array
+                {
+                    "name": "dbInfoOutputLoop", // Outer loop for databases
+                    "count": "[length(parameters('databases'))]",
+                    "input": { // Object for each database
+                        "databaseName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].name]",
+                    "containers": { // This property will be an array due to the 'copy'
+                        // "type": "array", // This was illustrative and is removed for strict syntax
+                            "copy": [ // 'copy' for containers is also an array
+                                {
+                                    "name": "containerInfoOutputLoop", // Inner loop for containers
+                                    "count": "[length(parameters('databases')[copyIndex('dbInfoOutputLoop')].containers)]",
+                                    "input": { // Object for each container
+                                        "containerName": "[parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name]",
+                                        "containerId": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', parameters('cosmosDbAccountName'), parameters('databases')[copyIndex('dbInfoOutputLoop')].name, parameters('databases')[copyIndex('dbInfoOutputLoop')].containers[copyIndex('containerInfoOutputLoop')].name)]"
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
-            }
+            ]
         }
     }
 }

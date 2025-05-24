@@ -104,53 +104,19 @@
                         }
                     ],
                     "output": {
-                        "type": "object"
-                    },
-                    "statements": [
-                        {
-                            "variable": "subnetObject",
-                            "value": {
-                                "name": "[subnetConfig.name]",
-                                "properties": {
-                                    "addressPrefix": "[subnetConfig.addressPrefix]"
-                                }
+                        "type": "object",
+                        "value": {
+                            "name": "[parameters('subnetConfig').name]",
+                            "id": "[resourceId(parameters('vnetName'), 'subnets', parameters('subnetConfig').name)]", // Added ID for direct use
+                            "properties": {
+                                "addressPrefix": "[parameters('subnetConfig').addressPrefix]",
+                                "networkSecurityGroup": "[if(contains(parameters('subnetConfig'), 'nsgName'), if(empty(parameters('allNsgs')), json('null'), createObject('id', resourceId('Microsoft.Network/networkSecurityGroups', parameters('subnetConfig').nsgName))), json('null'))]",
+                                "privateEndpointNetworkPolicies": "[if(contains(parameters('subnetConfig'), 'privateEndpointNetworkPolicies'), parameters('subnetConfig').privateEndpointNetworkPolicies, json('null'))]",
+                                "privateLinkServiceNetworkPolicies": "[if(contains(parameters('subnetConfig'), 'privateLinkServiceNetworkPolicies'), parameters('subnetConfig').privateLinkServiceNetworkPolicies, json('null'))]"
                             }
-                        },
-                        {
-                            "if": "[contains(subnetConfig, 'nsgName')]",
-                            "then": [
-                                {
-                                    "variable": "nsgId",
-                                    "value": "[if(empty(parameters('nsgs')), json('null'), resourceId('Microsoft.Network/networkSecurityGroups', subnetConfig.nsgName))]"
-                                },
-                                {
-                                   "set": "subnetObject.properties.networkSecurityGroup",
-                                   "value": "[if(not(equals(variables('nsgId'), json('null'))), createObject('id', variables('nsgId')), json('null'))]"
-                                }
-                            ]
-                        },
-                        {
-                            "if": "[contains(subnetConfig, 'privateEndpointNetworkPolicies')]",
-                            "then": [
-                                {
-                                    "set": "subnetObject.properties.privateEndpointNetworkPolicies",
-                                    "value": "[subnetConfig.privateEndpointNetworkPolicies]"
-                                }
-                            ]
-                        },
-                        {
-                            "if": "[contains(subnetConfig, 'privateLinkServiceNetworkPolicies')]",
-                            "then": [
-                                {
-                                    "set": "subnetObject.properties.privateLinkServiceNetworkPolicies",
-                                    "value": "[subnetConfig.privateLinkServiceNetworkPolicies]"
-                                }
-                            ]
-                        },
-                        {
-                            "return": "[subnetObject]"
                         }
-                    ]
+                    }
+                    // "statements" array is removed as logic is now in output.value
                 }
             }
         }
@@ -159,7 +125,8 @@
         "variables": {
             "subnetOutputs": {
                 "type": "array",
-                "value": "[parameters('subnets').map(subnet => contoso.buildSubnetObject(subnet, parameters('vnetName'), parameters('location'), parameters('nsgs')))]"
+                // The map function directly uses the output of buildSubnetObject
+                "value": "[parameters('subnets').map(subnetConfig => contoso.buildSubnetObject(subnetConfig, parameters('vnetName'), parameters('location'), parameters('nsgs')))]"
             }
         }
     }
